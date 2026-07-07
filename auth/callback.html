@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Opening Nami…</title>
+  <meta name="description" content="Nami sign-in redirect. If you landed here from an email confirmation link, this page will forward you back to the Nami app.">
+  <!--
+    Why this page exists:
+
+    Supabase-issued confirmation and magic-link emails redirect the browser
+    to whatever `emailRedirectTo` we configured at sign-up time. Historically
+    that was `nami://auth/callback?code=…` — a direct custom-scheme redirect.
+
+    Chrome on iOS (and a few other in-app browsers, e.g. Outlook web)
+    silently block HTTPS-to-custom-scheme redirects for security reasons.
+    The user sees "connection was lost" and the flow dies before the app
+    ever hears about the code.
+
+    Fix: point Supabase's redirect at this HTTPS page instead. On load, we
+    forward the entire query string to the app via a `window.location`
+    assignment — which iOS treats as a user-initiated navigation and prompts
+    "Open in Nami?" reliably from every browser. A fallback button covers
+    the rare case where the auto-redirect is blocked (older iOS, Focus
+    modes, weird in-app browsers).
+  -->
+  <style>
+    :root {
+      --bg: #FAFAF7;
+      --ink: #1A1A1A;
+      --ink-subtle: #6B6B6B;
+      --divider: #E8E6E0;
+      --accent: #1A1A1A;
+      --accent-ink: #FAFAF7;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #15171B;
+        --ink: #EEEBE3;
+        --ink-subtle: #9B9890;
+        --divider: #2C2D32;
+        --accent: #EEEBE3;
+        --accent-ink: #15171B;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 17px;
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+    main {
+      max-width: 460px;
+      margin: 0 auto;
+      padding: 80px 24px 40px;
+      text-align: center;
+    }
+    .kanji {
+      font-size: 64px;
+      font-weight: 200;
+      color: var(--divider);
+      margin: 0 0 12px;
+      line-height: 1;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 400;
+      letter-spacing: -0.3px;
+      margin: 0 0 12px;
+    }
+    p {
+      margin: 0 0 18px;
+      color: var(--ink-subtle);
+    }
+    .button {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-ink);
+      text-decoration: none;
+      padding: 14px 32px;
+      border-radius: 999px;
+      font-weight: 500;
+      letter-spacing: 0.4px;
+      margin: 8px 0;
+      min-width: 200px;
+    }
+    .button:active { opacity: 0.85; }
+    .secondary {
+      color: var(--ink-subtle);
+      font-size: 14px;
+      margin-top: 32px;
+    }
+    .secondary a {
+      color: var(--ink-subtle);
+    }
+    .spinner {
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      border: 2px solid var(--divider);
+      border-top-color: var(--ink);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      vertical-align: middle;
+      margin-right: 10px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .error-card {
+      background: var(--divider);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 24px 0;
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.5;
+      text-align: left;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<main>
+  <p class="kanji">波</p>
+  <h1 id="title"><span class="spinner"></span>Opening Nami…</h1>
+  <p id="subtitle">You'll be prompted to open the Nami app. Tap <strong>Open</strong>.</p>
+
+  <div id="error" class="error-card hidden"></div>
+
+  <a id="openBtn" class="button" href="#">Open Nami</a>
+
+  <p class="secondary">
+    Nothing happening? Make sure Nami is installed on this device, then tap the button above.
+  </p>
+</main>
+
+<script>
+  (function () {
+    // Parse query params. Supabase can hand us either a success `code` or an
+    // error triplet (`error`, `error_code`, `error_description`). We forward
+    // whatever we got straight through — the app's deep-link handler in
+    // App.tsx knows how to interpret both shapes.
+    var search = window.location.search || '';
+    var params = new URLSearchParams(search);
+    var code = params.get('code');
+    var errorParam = params.get('error');
+    var errorDesc = params.get('error_description');
+
+    var titleEl = document.getElementById('title');
+    var subtitleEl = document.getElementById('subtitle');
+    var errorEl = document.getElementById('error');
+    var openBtn = document.getElementById('openBtn');
+
+    // Build the deep-link target. We pass the raw search string through so
+    // any params Supabase added (code OR the full error triplet) reach the
+    // app untouched. The app's handler is defensive about both shapes.
+    var deepLink = 'nami://auth/callback' + (search || '');
+    openBtn.href = deepLink;
+
+    if (errorParam) {
+      // Show Supabase's error message plainly and let the user try the app
+      // anyway (the in-app deep-link handler also surfaces the error, so this
+      // is redundant but reassuring). Common case: the confirmation link
+      // expired and the user needs to sign up again for a fresh one.
+      titleEl.innerHTML = 'Link problem';
+      subtitleEl.textContent = 'The confirmation link could not be used. Open Nami and try signing up again with the same email to get a fresh link.';
+      var pretty = errorDesc
+        ? decodeURIComponent(errorDesc.replace(/\+/g, ' '))
+        : 'This confirmation link is invalid or has expired.';
+      errorEl.textContent = pretty;
+      errorEl.classList.remove('hidden');
+      // Still let the user open the app so the in-app UX matches.
+      openBtn.textContent = 'Open Nami';
+      return;
+    }
+
+    if (!code) {
+      titleEl.innerHTML = 'Missing confirmation code';
+      subtitleEl.textContent = 'This page is a redirect target for Nami confirmation links. If you landed here from an email, the link may have been shortened or altered — open the original email and tap the link again.';
+      openBtn.textContent = 'Open Nami anyway';
+      return;
+    }
+
+    // Happy path — try to auto-redirect straight away. On iOS Safari and
+    // Chrome this triggers the "Open in Nami?" system prompt. If the app
+    // isn't installed or the redirect is blocked (Focus, in-app browsers),
+    // the button remains as a visible fallback the user can tap themselves.
+    // Small timeout so the user sees "Opening Nami…" for a moment rather
+    // than the page vanishing instantly.
+    setTimeout(function () {
+      window.location.href = deepLink;
+    }, 200);
+  })();
+</script>
+</body>
+</html>
